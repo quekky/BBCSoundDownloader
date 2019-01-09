@@ -5,11 +5,13 @@ import re
 import shutil
 import sys
 import urllib.request
+from multiprocessing import RLock
 from multiprocessing.pool import ThreadPool
 from pathlib import Path
+from tqdm import tqdm
 
 THREAD_COUNT = 10
-MAX_FILENAME_LENGTH = 143  # this is the max with ecryptfs, but most systems are 255 chars max
+MAX_FILENAME_LENGTH = 255  # this is the max with ecryptfs, but most systems are 255 chars max
 
 
 class Downloader:
@@ -22,22 +24,22 @@ class Downloader:
 
     def download_all(self):
         print('Downloading %s samples' % self.total_count)
-        results = ThreadPool(self.thread_count).map(self.download, self.samples)
-        print('Execution completed, reporting failures:')
+        results = tqdm(ThreadPool(self.thread_count, initializer=tqdm.set_lock, initargs=(RLock(),)).imap(self.download, self.samples), total=self.total_count)
+        failed_str = ''
         for success, filepath, e in results:
             if not success:
-                print('%s failed with exception: %s' % (filepath, e))
+                failed_str += "%s failed with exception: %s\n" % (filepath, e)
+        print(failed_str)
         print('%d failures reported.' % self.failed)
 
     def download(self, sample):
         url, filepath = sample
-        print('Starting %s => %s' % (url, filepath))
         try:
             filepath.parent.mkdir(parents=True, exist_ok=True)
             temp_path, headers = urllib.request.urlretrieve(url)
-            shutil.move(temp_path, filepath)
+            shutil.move(temp_path, str(filepath))
             self.finished += 1
-            print('(%d/%d) Finished %s' % (self.finished, self.total_count, str(filepath)))
+            tqdm.write('Finished %s' % (str(filepath)))
             return True, None, None
         except Exception as e:
             self.failed += 1
@@ -49,11 +51,14 @@ class Downloader:
     def get_samples(self):
         samples = []
         csv_path = os.path.join(os.path.dirname(__file__), 'BBCSoundEffects.csv')
+        if not os.path.exists(csv_path):
+            temp_path, headers = urllib.request.urlretrieve('http://bbcsfx.acropolis.org.uk/assets/BBCSoundEffects.csv')
+            shutil.move(temp_path, csv_path)
         with open(csv_path, encoding='utf8') as f:
             reader = csv.DictReader(f)
             for row in reader:
                 folder = self.sanitize_path(row['CDName'])
-                suffix = '.' + row['location']
+                suffix = ' - ' + row['location']
                 max_description_length = MAX_FILENAME_LENGTH - len(suffix)
                 filename = self.sanitize_path(row['description'])[:max_description_length] + suffix
                 filepath = Path('sounds') / folder / filename
@@ -63,7 +68,7 @@ class Downloader:
         return samples
 
     def sanitize_path(self, path):
-        return re.sub(r'[^\w\-&,()\. ]', '_', path).strip()
+        return re.sub(r'[^\w\-&,()\. ]', '_', path).strip().strip('.')
 
 
 if __name__ == "__main__":
