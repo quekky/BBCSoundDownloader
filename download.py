@@ -24,7 +24,7 @@ class Downloader:
 
     def download_all(self):
         print('Downloading %s samples' % self.total_count)
-        results = tqdm(ThreadPool(self.thread_count, initializer=tqdm.set_lock, initargs=(RLock(),)).imap(self.download, self.samples), total=self.total_count)
+        results = tqdm(ThreadPool(self.thread_count, initializer=tqdm.set_lock, initargs=(RLock(),)).imap_unordered(self.download, self.samples), total=self.total_count)
         failed_str = ''
         for success, filepath, e in results:
             if not success:
@@ -56,7 +56,11 @@ class Downloader:
             shutil.move(temp_path, csv_path)
         with open(csv_path, encoding='utf8') as f:
             reader = csv.DictReader(f)
-            for row in reader:
+            row_count = sum(1 for row in reader)
+        with open(csv_path, encoding='utf8') as f:
+            reader = csv.DictReader(f)
+            print('Reading csv and checking files on disk')
+            for row in tqdm(reader, total=row_count):
                 folder = self.sanitize_path(row['CDName'])
                 suffix = ' - ' + row['location']
                 max_description_length = MAX_FILENAME_LENGTH - len(suffix)
